@@ -1,0 +1,158 @@
+#!/bin/sh
+# 
+# IDO2DB OCF RA
+# Based on Dummy OCF RA by Lars Marowsky-Brée
+#
+# Copyright (c) 2013 Inuits BVBA, Kenny Rasschaert
+# Copyright (c) 2004 SUSE LINUX AG, Lars Marowsky-Brée
+#                    All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of version 2 of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+#
+# Further, this software is distributed without any warranty that it is
+# free of the rightful claim of any third person regarding infringement
+# or the like.  Any license provided herein, whether implied or
+# otherwise, applies only to this software file.  Patent licenses, if
+# any, provided herein do not apply to combinations of this program with
+# other software, or any other product whatsoever.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc., 59 Temple Place - Suite 330, Boston MA 02111-1307, USA.
+#
+
+#######################################################################
+# Initialization:
+
+. ${OCF_ROOT}/resource.d/heartbeat/.ocf-shellfuncs
+
+#######################################################################
+
+meta_data() {
+  cat <<END
+<?xml version="1.0"?>
+<!DOCTYPE resource-agent SYSTEM "ra-api-1.dtd">
+<resource-agent name="IDO2DB" version="1.0">
+  <version>1.0</version>
+
+  <longdesc lang="en">
+    This is an IDO2DB Resource Agent. 
+  </longdesc>
+  <shortdesc lang="en">IDO2DB resource agent</shortdesc>
+
+  <parameters></parameters>
+
+  <actions>
+    <action name="start"        timeout="20" />
+    <action name="stop"         timeout="120" />
+    <action name="monitor"      timeout="20" interval="10" depth="0"/>
+    <action name="reload"       timeout="120" />
+    <action name="migrate_to"   timeout="20" />
+    <action name="migrate_from" timeout="20" />
+    <action name="validate-all" timeout="20" />
+    <action name="meta-data"    timeout="5" />
+  </actions>
+</resource-agent>
+END
+}
+
+#######################################################################
+
+# don't exit on TERM, to test that lrmd makes sure that we do exit
+trap sigterm_handler TERM
+sigterm_handler() {
+  ocf_log info "They use TERM to bring us down. No such luck."
+  return
+}
+
+ido2db_usage() {
+  cat <<END
+usage: $0 {start|stop|monitor|migrate_to|migrate_from|meta-data}
+
+Expects to have a fully populated OCF RA-compliant environment set.
+END
+}
+
+ido2db_start() {
+  touch /var/run/ra-ido2db.pid
+  ido2db_monitor
+  if [ $? =  $OCF_SUCCESS ]; then
+    return $OCF_SUCCESS
+  else
+    service ido2db start
+  fi
+}
+
+ido2db_stop() {
+  ido2db_monitor
+  if [ $? = $OCF_SUCCESS ]; then
+    rm -f /var/run/ra-ido2db.pid
+    ocf_log info "I stopped IDO2DB"
+    # stop ido2db, but be patient, it routinely takes half a minute
+    timeout 2m service ido2db stop || ido2db_stop_timeout
+  fi
+  return $OCF_SUCCESS
+}
+
+ido2db_stop_timeout() {
+  ocf_log warn "IDO2DB took longer than 10 seconds to stop, killing it for good measure."
+  pkill -KILL ido2db
+}
+
+ido2db_monitor() {
+  # Monitor _MUST!_ differentiate correctly between running
+  # (SUCCESS), failed (ERROR) or _cleanly_ stopped (NOT RUNNING).
+  # That is THREE states, not just yes/no.
+  if [ -e /var/run/ra-ido2db.pid ]; then
+    # Ask the init script how ido2db is doing. It uses LSB status_of_proc
+    service ido2db status >/dev/null 2>&1
+    # If status_of_proc is happy, we are happy.
+    if [ $? -eq 0 ]; then
+      return $OCF_SUCCESS
+    else
+      return $OCF_ERR_GENERIC
+    fi
+  else
+    return $OCF_NOT_RUNNING
+  fi
+}
+
+case $__OCF_ACTION in
+  meta-data)     meta_data
+                 exit $OCF_SUCCESS
+                 ;;
+  start)         ido2db_start
+                 ;;
+  stop)          ido2db_stop
+                 ;;
+  monitor)       ido2db_monitor
+                 ;;
+  migrate_to)    ocf_log info "Migrating ${OCF_RESOURCE_INSTANCE} to ${OCF_RESKEY_CRM_meta_migrate_target}."
+                 ido2db_stop
+                 ;;
+  migrate_from)  ocf_log info "Migrating ${OCF_RESOURCE_INSTANCE} to ${OCF_RESKEY_CRM_meta_migrate_source}."
+                 ido2db_start
+                 ;;
+  reload)        ocf_log err "Reloading..."
+                 ido2db_start
+                 ;;
+  validate-all)  ocf_log info "Validating. (not implemented)"
+                 exit $OCF_SUCCESS
+                 ;;
+  usage|help)    ido2db_usage
+                 exit $OCF_SUCCESS
+                 ;;
+  *)             ido2db_usage
+                 exit $OCF_ERR_UNIMPLEMENTED
+                 ;;
+esac
+rc=$?
+ocf_log debug "${OCF_RESOURCE_INSTANCE} $__OCF_ACTION : $rc"
+exit $rc
+
