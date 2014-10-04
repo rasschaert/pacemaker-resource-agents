@@ -102,7 +102,7 @@ icinga_stop() {
 
 icinga_stop_timeout() {
   ocf_log warn "Icinga took longer than 10 seconds to stop, killing it for good measure."
-  pkill -KILL icinga
+  pkill -KILL -f '^/usr/bin/icinga'
 }
 
 icinga_monitor() {
